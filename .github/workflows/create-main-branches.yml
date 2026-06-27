@@ -1,0 +1,57 @@
+name: Create main branches in repos with master
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-main-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Create main branch in repos with master
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          OWNER: MarcelRaschke
+        run: |
+          echo "Fetching all repositories for $OWNER..."
+          repos=$(gh repo list "$OWNER" --limit 200 --json name,defaultBranchRef --jq '.[] | select(.defaultBranchRef.name == "master") | .name')
+
+          echo "Repositories with master branch:"
+          echo "$repos"
+
+          for repo in $repos; do
+            echo ""
+            echo "Processing $OWNER/$repo..."
+
+            # Get the SHA of the master branch HEAD
+            master_sha=$(gh api "repos/$OWNER/$repo/git/ref/heads/master" --jq '.object.sha' 2>/dev/null || true)
+
+            if [ -z "$master_sha" ]; then
+              echo "  ⚠️  Could not get master SHA for $repo, skipping."
+              continue
+            fi
+
+            # Check if main already exists
+            existing=$(gh api "repos/$OWNER/$repo/git/ref/heads/main" --jq '.ref' 2>/dev/null || true)
+
+            if [ -n "$existing" ]; then
+              echo "  ℹ️  main branch already exists in $repo, skipping."
+              continue
+            fi
+
+            # Create main branch pointing to master HEAD
+            result=$(gh api "repos/$OWNER/$repo/git/refs" \
+              --method POST \
+              --field ref="refs/heads/main" \
+              --field sha="$master_sha" 2>&1)
+
+            if echo "$result" | grep -q '"ref"'; then
+              echo "  ✅  Created main branch in $repo (SHA: $master_sha)"
+            else
+              echo "  ❌  Failed to create main branch in $repo: $result"
+            fi
+          done
+
+          echo ""
+          echo "Done."
